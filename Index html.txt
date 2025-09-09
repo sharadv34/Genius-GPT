@@ -1,0 +1,247 @@
+Index.html
+
+# AttachGPT — Full Real Version (Frontend + Serverless Backend)
+
+This repository contains a minimal, secure, production-friendly example to run **AttachGPT** with *real* AI replies using the OpenAI API. It is optimized to be deployed quickly to **Vercel** (recommended) or Netlify functions. The frontend is a React app; the backend is a serverless function that forwards chat requests to OpenAI **without exposing your API key in the browser**.
+
+---
+
+## What you get in this bundle
+
+- `package.json` — dependencies and scripts
+- `src/App.jsx` — React frontend (chat UI)
+- `pages/api/attachgpt.js` — Vercel/Serverless backend (Node.js) that calls OpenAI
+- `README` — step-by-step deploy & configure instructions
+
+---
+
+## FILE: package.json
+
+```json
+{
+  "name": "attachgpt-real",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "14.0.0",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "openai": "4.9.0"
+  }
+}
+```
+
+> This example uses **Next.js** for easiest serverless deployment on Vercel. If you prefer plain React + Netlify Functions, I can provide that variant.
+
+---
+
+## FILE: pages/api/attachgpt.js  (serverless backend)
+
+```js
+// pages/api/attachgpt.js
+import { NextResponse } from 'next/server';
+import OpenAI from 'openai';
+
+// Note: For Vercel serverless functions you can access process.env.OPENAI_API_KEY
+// Make sure to set OPENAI_API_KEY in your deployment environment (Vercel dashboard or `vercel env add`).
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  try {
+    const { prompt, system, history } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+
+    // Build messages array for OpenAI chat completion
+    const messages = [];
+    if (system) messages.push({ role: 'system', content: system });
+    if (Array.isArray(history)) {
+      // history is the frontend chat messages (objects with role and text)
+      history.forEach((m) => {
+        const role = m.role === 'user' ? 'user' : 'assistant';
+        messages.push({ role, content: m.text });
+      });
+    }
+    messages.push({ role: 'user', content: prompt });
+
+    // Call OpenAI Chat Completions (gpt-4o-mini or gpt-4o/ gpt-4o-mini is used as an example — change as needed)
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages,
+      temperature: 0.2,
+      max_tokens: 800
+    });
+
+    const reply = completion.choices?.[0]?.message?.content ?? 'No reply';
+    res.status(200).json({ reply });
+  } catch (err) {
+    console.error('AttachGPT backend error:', err);
+    res.status(500).json({ error: err.message || 'Server error' });
+  }
+}
+```
+
+> **Important:** Do NOT put your OpenAI API key in client-side code. Set it as `OPENAI_API_KEY` environment variable on Vercel or your server.
+
+---
+
+## FILE: src/App.jsx  (frontend React chat UI)
+
+```jsx
+import React, { useEffect, useRef, useState } from 'react';
+
+export default function App() {
+  const [messages, setMessages] = useState(() => {
+    try {
+      const raw = localStorage.getItem('attachgpt_chats_v1');
+      return raw ? JSON.parse(raw) : [{ id: 1, role: 'assistant', text: 'Namaste! Main AttachGPT hoon — aap poochh sakte hain.', ts: Date.now() }];
+    } catch (e) {
+      return [{ id: 1, role: 'assistant', text: 'Namaste! Main AttachGPT hoon — aap poochh sakte hain.', ts: Date.now() }];
+    }
+  });
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState('Aap ek helpful Hindi-speaking jewellery assistant ho.');
+  const messagesRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.setItem('attachgpt_chats_v1', JSON.stringify(messages));
+    scrollToBottom();
+  }, [messages]);
+
+  function scrollToBottom() {
+    setTimeout(() => {
+      messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: 'smooth' });
+    }, 50);
+  }
+
+  function addMessage(role, text) {
+    setMessages((m) => [...m, { id: Date.now() + Math.random(), role, text, ts: Date.now() }]);
+  }
+
+  async function handleSend() {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    addMessage('user', trimmed);
+    setInput('');
+    setLoading(true);
+
+    try {
+      const resp = await fetch('/api/attachgpt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: trimmed, system: systemPrompt, history: messages })
+      });
+      const data = await resp.json();
+      addMessage('assistant', data.reply || 'Kuchh galat ho gaya — no reply');
+    } catch (err) {
+      addMessage('assistant', 'Server error: ' + (err.message || 'unknown'));
+    }
+
+    setLoading(false);
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12, background: '#fff8f0' }}>
+      <div style={{ width: '100%', maxWidth: 800, boxShadow: '0 10px 30px rgba(0,0,0,0.1)', borderRadius: 12, overflow: 'hidden' }}>
+        <div style={{ background: '#f59e0b', padding: 16, color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <div style={{ width: 40, height: 40, borderRadius: 20, background: 'white', color: '#c2410c', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>AG</div>
+            <div>
+              <div style={{ fontWeight: '700' }}>AttachGPT</div>
+              <div style={{ fontSize: 12 }}>Your Hindi/English jewellery assistant</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => { navigator.clipboard?.writeText(messages.map(m => `${m.role.toUpperCase()}: ${m.text}`).join('\n\n')); alert('Chat copied'); }} style={{ background: 'white', color: '#92400e', padding: '6px 10px', borderRadius: 6 }}>Copy</button>
+            <button onClick={() => { setMessages([]); localStorage.removeItem('attachgpt_chats_v1'); }} style={{ background: 'white', color: '#92400e', padding: '6px 10px', borderRadius: 6 }}>Clear</button>
+          </div>
+        </div>
+
+        <div ref={messagesRef} style={{ height: 420, overflowY: 'auto', padding: 16, background: 'white' }}>
+          {messages.map(m => (
+            <div key={m.id} style={{ marginBottom: 12, display: 'flex', justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+              <div style={{ maxWidth: '80%', padding: 12, borderRadius: 10, background: m.role === 'user' ? '#fff7ed' : '#f3f4f6', color: '#111' }}>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{m.text}</div>
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 6, textAlign: 'right' }}>{new Date(m.ts).toLocaleString()}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: 12, background: '#fafafa' }}>
+          <div style={{ marginBottom: 8, fontSize: 12, color: '#374151' }}>System prompt (helps the assistant behave):</div>
+          <input value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} style={{ width: '100%', padding: 8, marginBottom: 8, borderRadius: 6, border: '1px solid #e5e7eb' }} />
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <textarea rows={2} value={input} onKeyDown={handleKeyDown} onChange={(e) => setInput(e.target.value)} style={{ flex: 1, padding: 10, borderRadius: 8, border: '1px solid #e5e7eb' }} placeholder="Type your message..." />
+            <button onClick={handleSend} disabled={loading} style={{ background: '#f59e0b', color: 'white', padding: '10px 14px', borderRadius: 8 }}>{loading ? 'Sending...' : 'Send'}</button>
+          </div>
+        </div>
+
+        <div style={{ padding: 8, textAlign: 'center', fontSize: 12, background: 'white', color: '#6b7280' }}>Made for Verma Jewellers — AttachGPT</div>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+## README — Deploy Steps (Vercel recommended)
+
+1. Create a new Git repository locally and paste the files above. Use this folder structure:
+```
+attachgpt-real/
+  package.json
+  pages/
+    api/
+      attachgpt.js
+  src/
+    App.jsx
+  pages/index.js -> simple wrapper to render /src/App.jsx (next page)
+```
+
+2. `pages/index.js` should render the App component:
+```js
+import dynamic from 'next/dynamic';
+const App = dynamic(() => import('../src/App'), { ssr: false });
+export default function Page() { return <App/> }
+```
+
+3. Push to GitHub.
+4. Create a Vercel account (free tier). Connect your GitHub repo and deploy.
+5. In Vercel dashboard, add an environment variable `OPENAI_API_KEY` (your OpenAI key).
+6. Deploy — Vercel will build and provide a URL (e.g. `https://attachgpt-yourname.vercel.app`).
+
+---
+
+## Notes & Security
+- Never expose your OpenAI API key on the client. Always use server-side functions.
+- Model choice: change `model:'gpt-4o-mini'` to whichever model you have access to (gpt-4o, gpt-4o-mini, gpt-4o-realtime-preview, or gpt-4o-mini). If you only have GPT-3.5 access, change accordingly.
+- Costs: OpenAI API calls cost money. Test with small prompts and check usage in your OpenAI dashboard.
+
+---
+
+## Want me to deploy it for you?
+- I cannot deploy into your Vercel/GitHub account directly, but I can produce the **exact files** (you can copy-paste) and give step-by-step screenshots. If you want, I will now paste a ready `pages/api/attachgpt.js`, `src/App.jsx`, and `pages/index.js` together so you can copy them exactly into your project.    
+
+---
+
+If you want the Netlify / plain React + Netlify Functions variant instead of Next.js, tell me and I'll produce that repo layout. Happy to provide the final `index.html` + serverless function code if you prefer non-Next setup.
+[  ]
